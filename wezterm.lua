@@ -12,8 +12,9 @@ local state_file = os.getenv("HOME") .. "/.config/wezterm/workspaces.json"
 -- Layout templates directory
 local layouts_dir = os.getenv("HOME") .. "/.config/wezterm/layouts"
 
--- Nav mode flag (InputSelector doesn't use key tables)
-local nav_active = {}
+-- Nav/Help mode flags (InputSelector doesn't use key tables)
+local map_active = {}
+local help_active = {}
 
 -- Font
 config.font = wezterm.font("JetBrainsMono Nerd Font")
@@ -48,7 +49,8 @@ local mode_colors = {
   search_mode = { bg = "#e0af68", fg = "#1a1b26", label = " SEARCH " },
   scroll_mode = { bg = "#7dcfff", fg = "#1a1b26", label = " SCROLL " },
   ui_mode = { bg = "#f7768e", fg = "#1a1b26", label = " UI " },
-  nav_mode = { bg = "#ff9e64", fg = "#1a1b26", label = " NAV " },
+  map_mode = { bg = "#ff9e64", fg = "#1a1b26", label = " MAP " },
+  help_mode = { bg = "#73daca", fg = "#1a1b26", label = " HELP " },
 }
 
 config.colors = {
@@ -65,6 +67,19 @@ config.cursor_blink_rate = 500
 
 -- Scrollback
 config.scrollback_lines = 10000
+
+-- Smooth scrolling
+config.enable_scroll_bar = false
+config.min_scroll_bar_height = "1cell"
+config.use_resize_increments = false
+
+-- Front-end rendering (WebGpu = smoother on Apple Silicon)
+config.front_end = "WebGpu"
+config.webgpu_power_preference = "HighPerformance"
+
+-- Frame rate
+config.max_fps = 120
+config.animation_fps = 120
 
 -- Leader key: Ctrl+Space (1s timeout)
 config.leader = { key = "Space", mods = "CTRL", timeout_milliseconds = 1000 }
@@ -131,9 +146,12 @@ wezterm.on("update-status", function(window, pane)
   -- Detect current mode
   local key_table = window:active_key_table()
   local win_id = tostring(window:window_id())
+  local leader_active = window:leader_is_active()
   local mode = mode_colors.normal
-  if nav_active[win_id] then
-    mode = mode_colors.nav_mode
+  if help_active[win_id] then
+    mode = mode_colors.help_mode
+  elseif map_active[win_id] then
+    mode = mode_colors.map_mode
   elseif key_table == "copy_mode" then
     mode = mode_colors.copy_mode
   elseif key_table == "search_mode" then
@@ -144,7 +162,7 @@ wezterm.on("update-status", function(window, pane)
     mode = mode_colors.ui_mode
   end
 
-  -- Right status: battery + time + mode indicator
+  -- Right status: battery + time + leader indicator + mode indicator
   local date = wezterm.strftime("%a %b %-d  %H:%M")
   local bat = ""
   for _, b in ipairs(wezterm.battery_info()) do
@@ -158,15 +176,28 @@ wezterm.on("update-status", function(window, pane)
     bat = icon .. " " .. charge .. "%%"
   end
 
-  window:set_right_status(wezterm.format({
+  local right_elements = {
     { Foreground = { Color = inactive_fg } },
     { Background = { Color = bg } },
     { Text = bat .. "   " .. date .. "  " },
-    { Background = { Color = mode.bg } },
-    { Foreground = { Color = mode.fg } },
-    { Attribute = { Intensity = "Bold" } },
-    { Text = mode.label },
-  }))
+  }
+
+  -- Leader key indicator: flash a pill when leader is active
+  if leader_active then
+    table.insert(right_elements, { Background = { Color = "#e0af68" } })
+    table.insert(right_elements, { Foreground = { Color = "#1a1b26" } })
+    table.insert(right_elements, { Attribute = { Intensity = "Bold" } })
+    table.insert(right_elements, { Text = " ⌨ LEADER " })
+    table.insert(right_elements, "ResetAttributes")
+  end
+
+  -- Mode indicator
+  table.insert(right_elements, { Background = { Color = mode.bg } })
+  table.insert(right_elements, { Foreground = { Color = mode.fg } })
+  table.insert(right_elements, { Attribute = { Intensity = "Bold" } })
+  table.insert(right_elements, { Text = mode.label })
+
+  window:set_right_status(wezterm.format(right_elements))
 end)
 
 -------------------------------------------------------------------------------
@@ -845,12 +876,118 @@ wezterm.on("select-layout", function(window, pane)
 end)
 
 -------------------------------------------------------------------------------
+-- Help mode: searchable keybinding cheat sheet
+-------------------------------------------------------------------------------
+
+wezterm.on("show-help", function(window, pane)
+  local win_id = tostring(window:window_id())
+  help_active[win_id] = true
+
+  local choices = {
+    -- Section: Modes
+    { label = "━━━ MODE ENTRY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    { label = "Leader + u          UI mode (tab/pane/workspace mgmt)", id = "_" },
+    { label = "Leader + i          Search mode (find in scrollback)", id = "_" },
+    { label = "Leader + o          Scroll mode (man-page navigation)", id = "_" },
+    { label = "Leader + p          Copy mode (vim selection/yank)", id = "_" },
+    { label = "Leader + m          Map mode (tree navigator)", id = "_" },
+    { label = "Leader + ?          Help mode (this screen)", id = "_" },
+    { label = "Esc / q             Exit any mode back to Normal", id = "_" },
+
+    -- Section: Tabs
+    { label = "━━━ TABS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    { label = "Leader + c          New tab", id = "_" },
+    { label = "Leader + b          Previous tab", id = "_" },
+    { label = "Leader + n          Next tab", id = "_" },
+    { label = "Leader + 1-9        Jump to tab by number", id = "_" },
+    { label = "Leader + ,          Rename tab", id = "_" },
+
+    -- Section: Panes
+    { label = "━━━ PANES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    { label = "Leader + \\          Vertical split", id = "_" },
+    { label = "Leader + -          Horizontal split", id = "_" },
+    { label = "Leader + h/j/k/l    Vim pane navigation", id = "_" },
+    { label = "Leader + x          Close pane", id = "_" },
+
+    -- Section: Workspaces
+    { label = "━━━ WORKSPACES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    { label = "Leader + w          Workspace picker (zoxide)", id = "_" },
+    { label = "Leader + W          Previous workspace", id = "_" },
+    { label = "Leader + $          Rename workspace", id = "_" },
+    { label = "Leader + S          Save workspace state", id = "_" },
+    { label = "Leader + R          Restore saved workspace", id = "_" },
+    { label = "Leader + D          Delete saved workspace", id = "_" },
+
+    -- Section: Layouts
+    { label = "━━━ LAYOUT TEMPLATES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    { label = "Leader + t          Select and launch a template", id = "_" },
+    { label = "Leader + T          Save current workspace as template", id = "_" },
+
+    -- Section: Tools
+    { label = "━━━ TOOLS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    { label = "Leader + y          Open yazi file manager (new tab)", id = "_" },
+    { label = "Cmd + Enter         Toggle fullscreen", id = "_" },
+
+    -- Section: Scroll Mode
+    { label = "━━━ SCROLL MODE (Leader + o) ━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    { label = "b                   Half page up", id = "_" },
+    { label = "Space               Half page down", id = "_" },
+    { label = "u / d               Half page up / down", id = "_" },
+    { label = "j / k               Line down / up", id = "_" },
+    { label = "g / G               Top / bottom", id = "_" },
+    { label = "/                   Search within scroll", id = "_" },
+
+    -- Section: Copy Mode
+    { label = "━━━ COPY MODE (Leader + p) ━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    { label = "v / V / Ctrl+v      Selection: char / line / block", id = "_" },
+    { label = "y                   Yank to clipboard and exit", id = "_" },
+    { label = "h/j/k/l             Vim movement", id = "_" },
+    { label = "w / b / e           Word forward / back / end", id = "_" },
+    { label = "0 / $ / ^           Line start / end / first char", id = "_" },
+    { label = "g / G               Scrollback top / bottom", id = "_" },
+    { label = "/ / ?               Search forward / backward", id = "_" },
+    { label = "n / N               Next / prev match", id = "_" },
+
+    -- Section: UI Mode
+    { label = "━━━ UI MODE (Leader + u) ━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    { label = "c                   New tab", id = "_" },
+    { label = "b / n               Prev / next tab", id = "_" },
+    { label = "1-9                 Jump to tab", id = "_" },
+    { label = "\\ / -               Vertical / horizontal split", id = "_" },
+    { label = "h/j/k/l             Pane navigation", id = "_" },
+    { label = "H/J/K/L             Pane resize", id = "_" },
+    { label = "z                   Toggle pane zoom", id = "_" },
+    { label = "x                   Close pane", id = "_" },
+
+    -- Section: Search Mode
+    { label = "━━━ SEARCH MODE (Leader + i) ━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    { label = "Type to search      Incremental search", id = "_" },
+    { label = "Ctrl+n / Ctrl+p     Next / prev match", id = "_" },
+    { label = "Ctrl+r              Cycle match type (case/regex)", id = "_" },
+    { label = "Enter               Accept match → copy mode", id = "_" },
+    { label = "Esc / Ctrl+q        Exit search", id = "_" },
+  }
+
+  window:perform_action(
+    act.InputSelector({
+      title = "  Keybinding Help (type to search)",
+      choices = choices,
+      fuzzy = true,
+      action = wezterm.action_callback(function(win, p, id, label)
+        help_active[tostring(win:window_id())] = nil
+      end),
+    }),
+    pane
+  )
+end)
+
+-------------------------------------------------------------------------------
 -- Navigation mode: tree view of all workspaces/tabs/panes
 -------------------------------------------------------------------------------
 
 wezterm.on("nav-tree", function(window, pane)
   local win_id = tostring(window:window_id())
-  nav_active[win_id] = true
+  map_active[win_id] = true
 
   local choices = {}
   local current_workspace = window:active_workspace()
@@ -886,12 +1023,13 @@ wezterm.on("nav-tree", function(window, pane)
   -- Build tree display
   for _, ws_name in ipairs(ws_names) do
     local tabs = workspaces[ws_name]
-    local ws_marker = (ws_name == current_workspace) and " " or " "
-    local ws_icon = "󰉋 "
+    local is_current = (ws_name == current_workspace)
+    local ws_icon = is_current and "▶ " or "■ "
+    local tab_count = #tabs
 
-    -- Workspace header
+    -- Workspace header with tab count
     table.insert(choices, {
-      label = ws_icon .. ws_marker .. ws_name,
+      label = ws_icon .. ws_name .. "  (" .. tab_count .. " tabs)",
       id = "ws:" .. ws_name,
     })
 
@@ -906,19 +1044,38 @@ wezterm.on("nav-tree", function(window, pane)
       local tab_num = tab:tab_id()
 
       local is_last_tab = (t_idx == #tabs)
-      local tree_branch = is_last_tab and "  └─ " or "  ├─ "
+      local tree_branch = is_last_tab and "    └── " or "    ├── "
       local tab_index = entry.tab_index + 1
 
-      -- Get cwd for context
+      -- Get cwd for context (just the last dir name, not full path)
       local cwd = ""
       local pane_cwd = tab:active_pane():get_current_working_dir()
       if pane_cwd then
-        cwd = tostring(pane_cwd):gsub("^file://[^/]*", ""):gsub("^" .. os.getenv("HOME"), "~")
-        if #cwd > 0 then cwd = " [" .. cwd .. "]" end
+        local full = tostring(pane_cwd):gsub("^file://[^/]*", "")
+        local short = full:gsub("^" .. os.getenv("HOME"), "~")
+        -- Show just the last 2 path components for brevity
+        local parts = {}
+        for part in short:gmatch("[^/]+") do table.insert(parts, part) end
+        if #parts > 2 then
+          cwd = " ‹…/" .. parts[#parts - 1] .. "/" .. parts[#parts] .. "›"
+        elseif #parts > 0 then
+          cwd = " ‹" .. short .. "›"
+        end
+      end
+
+      -- Tab icon based on process
+      local proc = tab:active_pane():get_foreground_process_name() or ""
+      local proc_short = proc:match("([^/]+)$") or ""
+      local tab_icon = "  "
+      if proc_short == "yazi" then tab_icon = "󰉋 "
+      elseif proc_short == "nvim" or proc_short == "vim" then tab_icon = " "
+      elseif proc_short == "claude" then tab_icon = "󰚩 "
+      elseif proc_short == "node" then tab_icon = " "
+      elseif proc_short == "python3" or proc_short == "python" then tab_icon = " "
       end
 
       table.insert(choices, {
-        label = tree_branch .. tab_index .. ": " .. tab_title .. cwd,
+        label = tree_branch .. tab_icon .. tab_index .. ":" .. tab_title .. cwd,
         id = "tab:" .. ws_name .. ":" .. tostring(entry.mux_win_id) .. ":" .. tostring(tab_num),
       })
 
@@ -928,12 +1085,12 @@ wezterm.on("nav-tree", function(window, pane)
         for p_idx, p_info in ipairs(panes) do
           local p_title = p_info.pane:get_title():gsub("^Copy mode: ", "")
           local is_last_pane = (p_idx == #panes)
-          local pane_indent = is_last_tab and "     " or "  │  "
+          local pane_indent = is_last_tab and "        " or "    │   "
           local pane_branch = is_last_pane and "└─ " or "├─ "
-          local pane_marker = p_info.is_active and "● " or "  "
+          local pane_marker = p_info.is_active and "● " or "○ "
 
           table.insert(choices, {
-            label = pane_indent .. pane_branch .. pane_marker .. "pane " .. (p_idx - 1) .. ": " .. p_title,
+            label = pane_indent .. pane_branch .. pane_marker .. p_title,
             id = "pane:" .. ws_name .. ":" .. tostring(entry.mux_win_id) .. ":" .. tostring(tab_num) .. ":" .. tostring(p_info.pane:pane_id()),
           })
         end
@@ -941,18 +1098,18 @@ wezterm.on("nav-tree", function(window, pane)
     end
   end
 
-  -- Add saved (not running) workspaces
+  -- Add saved (not running) workspaces — only if they exist
   local state = read_state()
+  local has_saved = false
   for name, data in pairs(state) do
     if not workspaces[name] then
-      local n = data.tabs and #data.tabs or 0
-      local total_panes = 0
-      for _, t in ipairs(data.tabs or {}) do
-        total_panes = total_panes + (t.pane_count or 1)
+      if not has_saved then
+        table.insert(choices, { label = "─── saved ───────────────────────────", id = "_" })
+        has_saved = true
       end
-      local saved_at = data.saved_at or ""
+      local n = data.tabs and #data.tabs or 0
       table.insert(choices, {
-        label = "󰗁  " .. name .. " (" .. n .. " tabs, " .. total_panes .. " panes) [saved " .. saved_at .. "]",
+        label = "󰗁  " .. name .. "  (" .. n .. " tabs) saved " .. (data.saved_at or ""),
         id = "restore:" .. name,
       })
     end
@@ -964,7 +1121,7 @@ wezterm.on("nav-tree", function(window, pane)
       choices = choices,
       fuzzy = true,
       action = wezterm.action_callback(function(win, p, id, label)
-        nav_active[tostring(win:window_id())] = nil
+        map_active[tostring(win:window_id())] = nil
         if not id then return end
 
         if id:sub(1, 3) == "ws:" then
@@ -1195,7 +1352,7 @@ config.keys = {
   -- Leader + p = Copy mode
   { key = "p", mods = "LEADER", action = act.ActivateCopyMode },
 
-  -- Leader + m = Nav mode (tree navigator)
+  -- Leader + m = Map mode (tree navigator)
   { key = "m", mods = "LEADER", action = act.EmitEvent("nav-tree") },
 
   -- Leader + t = select and launch a layout template
@@ -1203,6 +1360,9 @@ config.keys = {
 
   -- Leader + T = save current workspace as a layout template
   { key = "T", mods = "LEADER|SHIFT", action = act.EmitEvent("save-layout") },
+
+  -- Leader + ? = help mode (searchable cheat sheet)
+  { key = "?", mods = "LEADER|SHIFT", action = act.EmitEvent("show-help") },
 }
 
 -------------------------------------------------------------------------------
@@ -1222,6 +1382,8 @@ config.key_tables = {
     { key = "j", action = act.ScrollByLine(1) },
     { key = "g", action = act.ScrollToTop },
     { key = "G", mods = "SHIFT", action = act.ScrollToBottom },
+    -- Search within scroll mode
+    { key = "/", action = act.Multiple({ act.PopKeyTable, act.Search({ CaseInSensitiveString = "" }) }) },
     -- Exit
     { key = "Escape", action = act.PopKeyTable },
     { key = "q", action = act.PopKeyTable },
