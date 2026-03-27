@@ -9,6 +9,9 @@ local THIN_RIGHT = utf8.char(0xe0b1)
 -- Workspace state file
 local state_file = os.getenv("HOME") .. "/.config/wezterm/workspaces.json"
 
+-- Layout templates directory
+local layouts_dir = os.getenv("HOME") .. "/.config/wezterm/layouts"
+
 -- Nav mode flag (InputSelector doesn't use key tables)
 local nav_active = {}
 
@@ -548,6 +551,300 @@ wezterm.on("delete-workspace", function(window, pane)
 end)
 
 -------------------------------------------------------------------------------
+-- Layout templates
+-------------------------------------------------------------------------------
+
+-- Helper: read all layout template files from layouts directory
+local function read_layouts()
+  local layouts = {}
+  local handle = io.popen('ls "' .. layouts_dir .. '"/*.json 2>/dev/null')
+  if handle then
+    for file in handle:lines() do
+      local f = io.open(file, "r")
+      if f then
+        local raw = f:read("*a")
+        f:close()
+        local ok, data = pcall(wezterm.json_parse, raw)
+        if ok and data then
+          data._file = file
+          table.insert(layouts, data)
+        end
+      end
+    end
+    handle:close()
+  end
+  return layouts
+end
+
+-- Save current workspace as a layout template
+wezterm.on("save-layout", function(window, pane)
+  local workspace = window:active_workspace()
+  local tabs = {}
+
+  for _, tab in ipairs(window:mux_window():tabs()) do
+    local tab_title = tab:get_title() or ""
+    local panes = tab:panes_with_info()
+    local split_tree = build_split_tree(panes)
+
+    local process_list = {}
+    for _, p in ipairs(panes) do
+      local proc = p.pane:get_foreground_process_name() or ""
+      if proc ~= "" then
+        table.insert(process_list, proc:match("([^/]+)$") or proc)
+      end
+    end
+
+    table.insert(tabs, {
+      title = tab_title,
+      split_tree = split_tree,
+      pane_count = #panes,
+      processes = process_list,
+    })
+  end
+
+  -- Prompt for template name
+  window:perform_action(
+    act.PromptInputLine({
+      description = "Template name (e.g. 'fullstack', 'claude-dev'):",
+      action = wezterm.action_callback(function(win, p, line)
+        if not line or #line == 0 then return end
+
+        -- Sanitize name for filename
+        local filename = line:gsub("[^%w%-_]", "-"):lower()
+        local template = {
+          name = line,
+          description = "",
+          created_at = os.date("%Y-%m-%d %H:%M:%S"),
+          base_workspace = workspace,
+          tabs = tabs,
+        }
+
+        -- Prompt for optional description
+        win:perform_action(
+          act.PromptInputLine({
+            description = "Description (optional, Enter to skip):",
+            action = wezterm.action_callback(function(w2, p2, desc)
+              if desc and #desc > 0 then
+                template.description = desc
+              end
+
+              local filepath = layouts_dir .. "/" .. filename .. ".json"
+              local f = io.open(filepath, "w")
+              if f then
+                f:write(wezterm.json_encode(template))
+                f:close()
+                w2:toast_notification("WezTerm",
+                  "Layout '" .. line .. "' saved\n" ..
+                  #tabs .. " tabs",
+                  nil, 3000)
+              else
+                w2:toast_notification("WezTerm", "Failed to save layout", nil, 3000)
+              end
+            end),
+          }),
+          p
+        )
+      end),
+    }),
+    pane
+  )
+end)
+
+-- Select and launch a layout template
+wezterm.on("select-layout", function(window, pane)
+  local layouts = read_layouts()
+
+  if #layouts == 0 then
+    window:toast_notification("WezTerm",
+      "No layout templates found.\nUse Leader+T to save one.",
+      nil, 3000)
+    return
+  end
+
+  local choices = {}
+  for _, layout in ipairs(layouts) do
+    local n = layout.tabs and #layout.tabs or 0
+    local total_panes = 0
+    for _, t in ipairs(layout.tabs or {}) do
+      total_panes = total_panes + (t.pane_count or 1)
+    end
+    local desc = ""
+    if layout.description and #layout.description > 0 then
+      desc = " — " .. layout.description
+    end
+    table.insert(choices, {
+      label = layout.name .. " (" .. n .. " tabs, " .. total_panes .. " panes)" .. desc,
+      id = layout.name,
+    })
+  end
+
+  -- First: pick the template
+  window:perform_action(
+    act.InputSelector({
+      title = "Select Layout Template",
+      choices = choices,
+      fuzzy = true,
+      action = wezterm.action_callback(function(win, p, id, label)
+        if not id then return end
+
+        -- Find the selected layout
+        local layout = nil
+        for _, l in ipairs(layouts) do
+          if l.name == id then layout = l; break end
+        end
+        if not layout then return end
+
+        -- Prompt for workspace name
+        win:perform_action(
+          act.PromptInputLine({
+            description = "Workspace name (Enter for '" .. id .. "'):",
+            action = wezterm.action_callback(function(w2, p2, ws_name)
+              if not ws_name or #ws_name == 0 then
+                ws_name = id
+              end
+
+              -- Check if workspace name already exists
+              local existing = false
+              for _, name in ipairs(wezterm.mux.get_workspace_names()) do
+                if name == ws_name then existing = true; break end
+              end
+              if existing then
+                local n = 2
+                local base = ws_name
+                while existing do
+                  ws_name = base .. " (" .. n .. ")"
+                  existing = false
+                  for _, name in ipairs(wezterm.mux.get_workspace_names()) do
+                    if name == ws_name then existing = true; break end
+                  end
+                  n = n + 1
+                end
+              end
+
+              -- Prompt for base directory
+              w2:perform_action(
+                act.PromptInputLine({
+                  description = "Base directory (Enter for home, or type path):",
+                  action = wezterm.action_callback(function(w3, p3, base_dir)
+                    local home = os.getenv("HOME")
+                    if not base_dir or #base_dir == 0 then
+                      base_dir = nil -- use template's original cwds
+                    else
+                      -- Expand ~
+                      base_dir = base_dir:gsub("^~", home)
+                    end
+
+                    -- Create workspace with first tab
+                    local first_tab = layout.tabs[1]
+                    local first_cwd = home
+                    if base_dir then
+                      first_cwd = base_dir
+                    elseif first_tab and first_tab.split_tree and first_tab.split_tree.cwd then
+                      first_cwd = first_tab.split_tree.cwd
+                    end
+
+                    w3:perform_action(act.SwitchToWorkspace({
+                      name = ws_name,
+                      spawn = { cwd = first_cwd },
+                    }), p3)
+
+                    -- Restore tabs with splits after workspace switch
+                    wezterm.time.call_after(0.5, function()
+                      local target_win = nil
+                      for _, mux_win in ipairs(wezterm.mux.all_windows()) do
+                        if mux_win:get_workspace() == ws_name then
+                          target_win = mux_win
+                          break
+                        end
+                      end
+                      if not target_win then return end
+
+                      -- Helper to resolve cwd: use base_dir override or template's original
+                      local function resolve_cwd(tree_cwd)
+                        if base_dir then return base_dir end
+                        return tree_cwd or home
+                      end
+
+                      -- Restore first tab splits
+                      local existing_tabs = target_win:tabs()
+                      if #existing_tabs > 0 and first_tab and first_tab.split_tree then
+                        -- Override cwds if base_dir provided
+                        local tree = first_tab.split_tree
+                        if base_dir then
+                          -- Deep-replace cwds in the tree
+                          local function override_cwds(node)
+                            if node.type == "leaf" then
+                              node.cwd = base_dir
+                            elseif node.children then
+                              for _, child in ipairs(node.children) do
+                                override_cwds(child)
+                              end
+                            end
+                          end
+                          -- Work on a copy concept: just override in restore
+                          override_cwds(tree)
+                        end
+                        restore_split_tree(tree, existing_tabs[1]:active_pane())
+                        if first_tab.title and #first_tab.title > 0 then
+                          existing_tabs[1]:set_title(first_tab.title)
+                        end
+                      end
+
+                      -- Create remaining tabs
+                      for i = 2, #layout.tabs do
+                        local tab_data = layout.tabs[i]
+                        local tab_cwd = home
+                        if base_dir then
+                          tab_cwd = base_dir
+                        elseif tab_data.split_tree and tab_data.split_tree.cwd then
+                          tab_cwd = tab_data.split_tree.cwd
+                        end
+
+                        local new_tab, new_pane, _ = target_win:spawn_tab({
+                          cwd = tab_cwd,
+                        })
+
+                        if tab_data.split_tree then
+                          local tree = tab_data.split_tree
+                          if base_dir then
+                            local function override_cwds(node)
+                              if node.type == "leaf" then
+                                node.cwd = base_dir
+                              elseif node.children then
+                                for _, child in ipairs(node.children) do
+                                  override_cwds(child)
+                                end
+                              end
+                            end
+                            override_cwds(tree)
+                          end
+                          restore_split_tree(tree, new_pane)
+                        end
+
+                        if tab_data.title and #tab_data.title > 0 then
+                          new_tab:set_title(tab_data.title)
+                        end
+                      end
+
+                      w3:toast_notification("WezTerm",
+                        "Layout '" .. id .. "' launched as '" .. ws_name .. "'",
+                        nil, 3000)
+                    end)
+                  end),
+                }),
+                p2
+              )
+            end),
+          }),
+          p
+        )
+      end),
+    }),
+    pane
+  )
+end)
+
+-------------------------------------------------------------------------------
 -- Navigation mode: tree view of all workspaces/tabs/panes
 -------------------------------------------------------------------------------
 
@@ -900,6 +1197,12 @@ config.keys = {
 
   -- Leader + m = Nav mode (tree navigator)
   { key = "m", mods = "LEADER", action = act.EmitEvent("nav-tree") },
+
+  -- Leader + t = select and launch a layout template
+  { key = "t", mods = "LEADER", action = act.EmitEvent("select-layout") },
+
+  -- Leader + T = save current workspace as a layout template
+  { key = "T", mods = "LEADER|SHIFT", action = act.EmitEvent("save-layout") },
 }
 
 -------------------------------------------------------------------------------
