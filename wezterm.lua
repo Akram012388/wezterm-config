@@ -22,7 +22,7 @@ config.font_size = 14.0
 
 -- Window
 config.window_decorations = "RESIZE"
-config.window_padding = { left = 12, right = 12, top = 12, bottom = 12 }
+config.window_padding = { left = 20, right = 20, top = 16, bottom = 16 }
 config.macos_window_background_blur = 20
 config.window_background_opacity = 0.92
 
