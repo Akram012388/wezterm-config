@@ -61,9 +61,16 @@ config.colors = {
   },
 }
 
+-- Pane dividers
+config.inactive_pane_hsb = { saturation = 0.8, brightness = 0.7 }
+config.colors.split = "#7aa2f7"
+
 -- Cursor
 config.default_cursor_style = "BlinkingBar"
 config.cursor_blink_rate = 500
+config.colors.cursor_bg = "#7aa2f7"
+config.colors.cursor_fg = "#1a1b26"
+config.colors.cursor_border = "#7aa2f7"
 
 -- Scrollback
 config.scrollback_lines = 10000
