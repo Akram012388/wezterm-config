@@ -65,6 +65,19 @@ config.colors = {
 config.inactive_pane_hsb = { saturation = 0.8, brightness = 0.7 }
 config.colors.split = "#7aa2f7"
 
+-- Copy on select
+config.selection_word_boundary = " \t\n{}[]()\"'`,;:│"
+config.mouse_bindings = {
+  {
+    event = { Up = { streak = 1, button = "Left" } },
+    mods = "NONE",
+    action = act.Multiple({
+      act.CompleteSelection("ClipboardAndPrimarySelection"),
+      act.ClearSelection,
+    }),
+  },
+}
+
 -- Cursor
 config.default_cursor_style = "BlinkingBar"
 config.cursor_blink_rate = 500
