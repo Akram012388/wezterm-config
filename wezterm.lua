@@ -76,6 +76,11 @@ config.mouse_bindings = {
       act.ClearSelection,
     }),
   },
+  {
+    event = { Up = { streak = 1, button = "Left" } },
+    mods = "SUPER",
+    action = act.OpenLinkAtMouseCursor,
+  },
 }
 
 -- Cursor
@@ -1241,6 +1246,7 @@ end)
 
 config.keys = {
   -- Cmd shortcuts
+  { key = "Enter", mods = "ALT", action = act.DisableDefaultAssignment },
   { key = "Enter", mods = "CMD", action = act.ToggleFullScreen },
 
   -- Tab management
