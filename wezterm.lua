@@ -1246,6 +1246,7 @@ end)
 
 config.keys = {
   -- Cmd shortcuts
+  { key = "Enter", mods = "SHIFT", action = act.SendString("\x1b[13;2u") },
   { key = "Enter", mods = "ALT", action = act.DisableDefaultAssignment },
   { key = "Enter", mods = "CMD", action = act.ToggleFullScreen },
 
