@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty'); case \"$f\" in *.lua) ;; *) exit 0;; esac; [ -f \"$f\" ] || exit 0; stylua \"$f\" 2>/dev/null || true; err=$(luajit -bl \"$f\" /dev/null 2>&1) || { printf 'Lua syntax error in %s:\\n%s\\n' \"$f\" \"$err\" >&2; exit 2; }; out=$(cd \"$(dirname \"$f\")\" && selene \"$(basename \"$f\")\" 2>&1) || { printf 'selene findings in %s:\\n%s\\n' \"$f\" \"$out\" >&2; exit 2; }",
+            "timeout": 30,
+            "statusMessage": "Format + lint Lua"
+          }
+        ]
+      }
+    ]
+  }
+}

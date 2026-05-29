@@ -1,0 +1,12 @@
+# The Homebrew selene build ships only the Lua 5.1 std, but WezTerm runs a
+# Lua 5.4-compatible runtime. The lints below would otherwise false-positive on
+# valid 5.4 code or fight this config's deliberate style.
+std = "lua51+wezterm"
+
+[lints]
+# This config deliberately uses compact single-line `if cond then x end`.
+multiple_statements = "allow"
+# \x and \u escapes are valid in WezTerm's Lua; the 5.1-only std rejects them.
+bad_string_escape = "allow"
+# Intentional: different processes (vim/nvim, python/python3) share one icon glyph.
+if_same_then_else = "allow"

@@ -1,0 +1,27 @@
+# Selene std extension: the Homebrew build only ships Lua 5.1, which lacks the
+# utf8 library that WezTerm's Lua 5.4 runtime provides. Declared here so
+# `utf8.char(...)` isn't flagged as an undefined global. Referenced via
+# `std = "lua51+wezterm"` in selene.toml.
+---
+base: lua51
+globals:
+  utf8.char:
+    args:
+      - type: number
+        required: false
+  utf8.codepoint:
+    args:
+      - type: string
+      - type: number
+        required: false
+      - type: number
+        required: false
+  utf8.len:
+    args:
+      - type: string
+  utf8.offset:
+    args:
+      - type: string
+      - type: number
+  utf8.charpattern:
+    property: read-only

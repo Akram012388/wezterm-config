@@ -4,7 +4,6 @@ local config = wezterm.config_builder()
 
 -- Powerline arrow characters
 local SOLID_RIGHT = utf8.char(0xe0b0)
-local THIN_RIGHT = utf8.char(0xe0b1)
 
 -- Workspace state file
 local state_file = os.getenv("HOME") .. "/.config/wezterm/workspaces.json"
@@ -44,7 +43,7 @@ local inactive_fg = "#565f89"
 
 -- Mode colors
 local mode_colors = {
-  normal  = { bg = "#9ece6a", fg = "#1a1b26", label = " NORMAL " },
+  normal = { bg = "#9ece6a", fg = "#1a1b26", label = " NORMAL " },
   copy_mode = { bg = "#bb9af7", fg = "#1a1b26", label = " COPY " },
   search_mode = { bg = "#e0af68", fg = "#1a1b26", label = " SEARCH " },
   scroll_mode = { bg = "#7dcfff", fg = "#1a1b26", label = " SCROLL " },
@@ -113,7 +112,7 @@ config.leader = { key = "Space", mods = "CTRL", timeout_milliseconds = 1000 }
 -- Tab title formatting
 -------------------------------------------------------------------------------
 
-wezterm.on("format-tab-title", function(tab, tabs, panes, cfg, hover, max_width)
+wezterm.on("format-tab-title", function(tab, tabs, _panes, _cfg, _hover, _max_width)
   local index = tab.tab_index + 1
   local custom = tab.tab_title
   local title = (custom and #custom > 0) and custom or tab.active_pane.title
@@ -127,9 +126,7 @@ wezterm.on("format-tab-title", function(tab, tabs, panes, cfg, hover, max_width)
 
   local next_tab = tabs[tab.tab_index + 2]
   local next_bg = bg
-  if next_tab then
-    next_bg = next_tab.is_active and active_bg or inactive_bg
-  end
+  if next_tab then next_bg = next_tab.is_active and active_bg or inactive_bg end
 
   return {
     { Background = { Color = tab_bg } },
@@ -145,7 +142,7 @@ end)
 -- Status bar: workspace left, mode + battery + time right
 -------------------------------------------------------------------------------
 
-wezterm.on("update-status", function(window, pane)
+wezterm.on("update-status", function(window, _pane)
   local workspace = window:active_workspace()
 
   -- Determine the first tab's bg color for the arrow transition
@@ -153,9 +150,7 @@ wezterm.on("update-status", function(window, pane)
   local mux_win = window:mux_window()
   if mux_win then
     local tabs = mux_win:tabs_with_info()
-    if tabs and #tabs > 0 and tabs[1].is_active then
-      first_tab_bg = active_bg
-    end
+    if tabs and #tabs > 0 and tabs[1].is_active then first_tab_bg = active_bg end
   end
 
   window:set_left_status(wezterm.format({
@@ -193,10 +188,14 @@ wezterm.on("update-status", function(window, pane)
   for _, b in ipairs(wezterm.battery_info()) do
     local charge = math.floor(b.state_of_charge * 100 + 0.5)
     local icon = ""
-    if charge >= 75 then icon = "󰁹"
-    elseif charge >= 50 then icon = "󰁾"
-    elseif charge >= 25 then icon = "󰁼"
-    else icon = "󰁺"
+    if charge >= 75 then
+      icon = "󰁹"
+    elseif charge >= 50 then
+      icon = "󰁾"
+    elseif charge >= 25 then
+      icon = "󰁼"
+    else
+      icon = "󰁺"
     end
     bat = icon .. " " .. charge .. "%%"
   end
@@ -366,9 +365,7 @@ local function restore_split_tree(tree, target_pane)
     -- Send cd command to reach the right directory
     local cwd = tree.cwd or os.getenv("HOME")
     target_pane:send_text("cd " .. wezterm.shell_quote_arg(cwd) .. " && clear\n")
-    if tree.is_active then
-      return target_pane
-    end
+    if tree.is_active then return target_pane end
     return nil
   end
 
@@ -390,7 +387,7 @@ local function restore_split_tree(tree, target_pane)
 end
 
 -- Save workspace: full state with splits, processes, focus
-wezterm.on("save-workspace", function(window, pane)
+wezterm.on("save-workspace", function(window, _pane)
   local workspace = window:active_workspace()
   local tabs = {}
   local active_tab_idx = 0
@@ -406,9 +403,7 @@ wezterm.on("save-workspace", function(window, pane)
     local process_list = {}
     for _, p in ipairs(panes) do
       local proc = p.pane:get_foreground_process_name() or ""
-      if proc ~= "" then
-        table.insert(process_list, proc)
-      end
+      if proc ~= "" then table.insert(process_list, proc) end
     end
 
     -- Check if this is the active tab
@@ -440,10 +435,12 @@ wezterm.on("save-workspace", function(window, pane)
   for _, t in ipairs(tabs) do
     total_panes = total_panes + t.pane_count
   end
-  window:toast_notification("WezTerm",
-    "Workspace '" .. workspace .. "' saved\n" ..
-    #tabs .. " tabs, " .. total_panes .. " panes",
-    nil, 3000)
+  window:toast_notification(
+    "WezTerm",
+    "Workspace '" .. workspace .. "' saved\n" .. #tabs .. " tabs, " .. total_panes .. " panes",
+    nil,
+    3000
+  )
 end)
 
 -- Restore workspace: full state with splits
@@ -463,13 +460,21 @@ wezterm.on("restore-workspace", function(window, pane)
     end
     local proc_str = ""
     local proc_list = {}
-    for p, _ in pairs(procs) do table.insert(proc_list, p) end
-    if #proc_list > 0 then
-      proc_str = " [" .. table.concat(proc_list, ", ") .. "]"
+    for p, _ in pairs(procs) do
+      table.insert(proc_list, p)
     end
+    if #proc_list > 0 then proc_str = " [" .. table.concat(proc_list, ", ") .. "]" end
     local saved_at = data.saved_at or "unknown"
     table.insert(choices, {
-      label = name .. " (" .. n .. " tabs, " .. total_panes .. " panes)" .. proc_str .. " — " .. saved_at,
+      label = name
+        .. " ("
+        .. n
+        .. " tabs, "
+        .. total_panes
+        .. " panes)"
+        .. proc_str
+        .. " — "
+        .. saved_at,
       id = name,
     })
   end
@@ -481,7 +486,7 @@ wezterm.on("restore-workspace", function(window, pane)
     act.InputSelector({
       title = "Restore Workspace",
       choices = choices,
-      action = wezterm.action_callback(function(win, _, id, label)
+      action = wezterm.action_callback(function(win, _, id, _label)
         if not id then return end
         local ws = state[id]
         if not ws or not ws.tabs then return end
@@ -504,7 +509,10 @@ wezterm.on("restore-workspace", function(window, pane)
           while true do
             local taken = false
             for _, name in ipairs(wezterm.mux.get_workspace_names()) do
-              if name == restore_name then taken = true; break end
+              if name == restore_name then
+                taken = true
+                break
+              end
             end
             if not taken then break end
             n = n + 1
@@ -519,10 +527,13 @@ wezterm.on("restore-workspace", function(window, pane)
           first_cwd = first_tab.split_tree.cwd
         end
 
-        win:perform_action(act.SwitchToWorkspace({
-          name = restore_name,
-          spawn = { cwd = first_cwd },
-        }), pane)
+        win:perform_action(
+          act.SwitchToWorkspace({
+            name = restore_name,
+            spawn = { cwd = first_cwd },
+          }),
+          pane
+        )
 
         -- Delay for workspace switch to complete, then restore tabs with splits
         wezterm.time.call_after(0.5, function()
@@ -553,25 +564,19 @@ wezterm.on("restore-workspace", function(window, pane)
               tab_cwd = tab_data.split_tree.cwd
             end
 
-            local new_tab, new_pane, new_win = target_win:spawn_tab({
+            local new_tab, new_pane, _new_win = target_win:spawn_tab({
               cwd = tab_cwd,
             })
 
-            if tab_data.split_tree then
-              restore_split_tree(tab_data.split_tree, new_pane)
-            end
+            if tab_data.split_tree then restore_split_tree(tab_data.split_tree, new_pane) end
 
-            if tab_data.title and #tab_data.title > 0 then
-              new_tab:set_title(tab_data.title)
-            end
+            if tab_data.title and #tab_data.title > 0 then new_tab:set_title(tab_data.title) end
           end
 
           -- Activate the previously active tab
           local active_idx = ws.active_tab or 0
           local all_tabs = target_win:tabs()
-          if all_tabs[active_idx + 1] then
-            all_tabs[active_idx + 1]:activate()
-          end
+          if all_tabs[active_idx + 1] then all_tabs[active_idx + 1]:activate() end
         end)
 
         win:toast_notification("WezTerm", "Restoring workspace '" .. id .. "'...", nil, 3000)
@@ -595,7 +600,7 @@ wezterm.on("delete-workspace", function(window, pane)
     act.InputSelector({
       title = "Delete Saved Workspace",
       choices = choices,
-      action = wezterm.action_callback(function(win, _, id, label)
+      action = wezterm.action_callback(function(win, _, id, _label)
         if not id then return end
         state[id] = nil
         write_state(state)
@@ -645,9 +650,7 @@ wezterm.on("save-layout", function(window, pane)
     local process_list = {}
     for _, p in ipairs(panes) do
       local proc = p.pane:get_foreground_process_name() or ""
-      if proc ~= "" then
-        table.insert(process_list, proc:match("([^/]+)$") or proc)
-      end
+      if proc ~= "" then table.insert(process_list, proc:match("([^/]+)$") or proc) end
     end
 
     table.insert(tabs, {
@@ -679,20 +682,20 @@ wezterm.on("save-layout", function(window, pane)
         win:perform_action(
           act.PromptInputLine({
             description = "Description (optional, Enter to skip):",
-            action = wezterm.action_callback(function(w2, p2, desc)
-              if desc and #desc > 0 then
-                template.description = desc
-              end
+            action = wezterm.action_callback(function(w2, _p2, desc)
+              if desc and #desc > 0 then template.description = desc end
 
               local filepath = layouts_dir .. "/" .. filename .. ".json"
               local f = io.open(filepath, "w")
               if f then
                 f:write(wezterm.json_encode(template))
                 f:close()
-                w2:toast_notification("WezTerm",
-                  "Layout '" .. line .. "' saved\n" ..
-                  #tabs .. " tabs",
-                  nil, 3000)
+                w2:toast_notification(
+                  "WezTerm",
+                  "Layout '" .. line .. "' saved\n" .. #tabs .. " tabs",
+                  nil,
+                  3000
+                )
               else
                 w2:toast_notification("WezTerm", "Failed to save layout", nil, 3000)
               end
@@ -711,9 +714,12 @@ wezterm.on("select-layout", function(window, pane)
   local layouts = read_layouts()
 
   if #layouts == 0 then
-    window:toast_notification("WezTerm",
+    window:toast_notification(
+      "WezTerm",
       "No layout templates found.\nUse Leader+T to save one.",
-      nil, 3000)
+      nil,
+      3000
+    )
     return
   end
 
@@ -725,9 +731,7 @@ wezterm.on("select-layout", function(window, pane)
       total_panes = total_panes + (t.pane_count or 1)
     end
     local desc = ""
-    if layout.description and #layout.description > 0 then
-      desc = " — " .. layout.description
-    end
+    if layout.description and #layout.description > 0 then desc = " — " .. layout.description end
     table.insert(choices, {
       label = layout.name .. " (" .. n .. " tabs, " .. total_panes .. " panes)" .. desc,
       id = layout.name,
@@ -740,13 +744,16 @@ wezterm.on("select-layout", function(window, pane)
       title = "Select Layout Template",
       choices = choices,
       fuzzy = true,
-      action = wezterm.action_callback(function(win, p, id, label)
+      action = wezterm.action_callback(function(win, p, id, _label)
         if not id then return end
 
         -- Find the selected layout
         local layout = nil
         for _, l in ipairs(layouts) do
-          if l.name == id then layout = l; break end
+          if l.name == id then
+            layout = l
+            break
+          end
         end
         if not layout then return end
 
@@ -755,14 +762,15 @@ wezterm.on("select-layout", function(window, pane)
           act.PromptInputLine({
             description = "Workspace name (Enter for '" .. id .. "'):",
             action = wezterm.action_callback(function(w2, p2, ws_name)
-              if not ws_name or #ws_name == 0 then
-                ws_name = id
-              end
+              if not ws_name or #ws_name == 0 then ws_name = id end
 
               -- Check if workspace name already exists
               local existing = false
               for _, name in ipairs(wezterm.mux.get_workspace_names()) do
-                if name == ws_name then existing = true; break end
+                if name == ws_name then
+                  existing = true
+                  break
+                end
               end
               if existing then
                 local n = 2
@@ -771,7 +779,10 @@ wezterm.on("select-layout", function(window, pane)
                   ws_name = base .. " (" .. n .. ")"
                   existing = false
                   for _, name in ipairs(wezterm.mux.get_workspace_names()) do
-                    if name == ws_name then existing = true; break end
+                    if name == ws_name then
+                      existing = true
+                      break
+                    end
                   end
                   n = n + 1
                 end
@@ -799,10 +810,13 @@ wezterm.on("select-layout", function(window, pane)
                       first_cwd = first_tab.split_tree.cwd
                     end
 
-                    w3:perform_action(act.SwitchToWorkspace({
-                      name = ws_name,
-                      spawn = { cwd = first_cwd },
-                    }), p3)
+                    w3:perform_action(
+                      act.SwitchToWorkspace({
+                        name = ws_name,
+                        spawn = { cwd = first_cwd },
+                      }),
+                      p3
+                    )
 
                     -- Restore tabs with splits after workspace switch
                     wezterm.time.call_after(0.5, function()
@@ -814,12 +828,6 @@ wezterm.on("select-layout", function(window, pane)
                         end
                       end
                       if not target_win then return end
-
-                      -- Helper to resolve cwd: use base_dir override or template's original
-                      local function resolve_cwd(tree_cwd)
-                        if base_dir then return base_dir end
-                        return tree_cwd or home
-                      end
 
                       -- Restore first tab splits
                       local existing_tabs = target_win:tabs()
@@ -882,9 +890,12 @@ wezterm.on("select-layout", function(window, pane)
                         end
                       end
 
-                      w3:toast_notification("WezTerm",
+                      w3:toast_notification(
+                        "WezTerm",
                         "Layout '" .. id .. "' launched as '" .. ws_name .. "'",
-                        nil, 3000)
+                        nil,
+                        3000
+                      )
                     end)
                   end),
                 }),
@@ -910,7 +921,10 @@ wezterm.on("show-help", function(window, pane)
 
   local choices = {
     -- Section: Modes
-    { label = "━━━ MODE ENTRY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    {
+      label = "━━━ MODE ENTRY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      id = "_",
+    },
     { label = "Leader + u          UI mode (tab/pane/workspace mgmt)", id = "_" },
     { label = "Leader + i          Search mode (find in scrollback)", id = "_" },
     { label = "Leader + o          Scroll mode (man-page navigation)", id = "_" },
@@ -920,7 +934,10 @@ wezterm.on("show-help", function(window, pane)
     { label = "Esc / q             Exit any mode back to Normal", id = "_" },
 
     -- Section: Tabs
-    { label = "━━━ TABS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    {
+      label = "━━━ TABS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      id = "_",
+    },
     { label = "Leader + c          New tab", id = "_" },
     { label = "Leader + b          Previous tab", id = "_" },
     { label = "Leader + n          Next tab", id = "_" },
@@ -928,14 +945,20 @@ wezterm.on("show-help", function(window, pane)
     { label = "Leader + ,          Rename tab", id = "_" },
 
     -- Section: Panes
-    { label = "━━━ PANES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    {
+      label = "━━━ PANES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      id = "_",
+    },
     { label = "Leader + \\          Vertical split", id = "_" },
     { label = "Leader + -          Horizontal split", id = "_" },
     { label = "Leader + h/j/k/l    Vim pane navigation", id = "_" },
     { label = "Leader + x          Close pane", id = "_" },
 
     -- Section: Workspaces
-    { label = "━━━ WORKSPACES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    {
+      label = "━━━ WORKSPACES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      id = "_",
+    },
     { label = "Leader + w          Workspace picker (zoxide)", id = "_" },
     { label = "Leader + W          Previous workspace", id = "_" },
     { label = "Leader + $          Rename workspace", id = "_" },
@@ -944,17 +967,26 @@ wezterm.on("show-help", function(window, pane)
     { label = "Leader + D          Delete saved workspace", id = "_" },
 
     -- Section: Layouts
-    { label = "━━━ LAYOUT TEMPLATES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    {
+      label = "━━━ LAYOUT TEMPLATES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      id = "_",
+    },
     { label = "Leader + t          Select and launch a template", id = "_" },
     { label = "Leader + T          Save current workspace as template", id = "_" },
 
     -- Section: Tools
-    { label = "━━━ TOOLS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    {
+      label = "━━━ TOOLS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      id = "_",
+    },
     { label = "Leader + y          Open yazi file manager (new tab)", id = "_" },
     { label = "Cmd + Enter         Toggle fullscreen", id = "_" },
 
     -- Section: Scroll Mode
-    { label = "━━━ SCROLL MODE (Leader + o) ━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    {
+      label = "━━━ SCROLL MODE (Leader + o) ━━━━━━━━━━━━━━━━━━━━━",
+      id = "_",
+    },
     { label = "b                   Half page up", id = "_" },
     { label = "Space               Half page down", id = "_" },
     { label = "u / d               Half page up / down", id = "_" },
@@ -963,7 +995,10 @@ wezterm.on("show-help", function(window, pane)
     { label = "/                   Search within scroll", id = "_" },
 
     -- Section: Copy Mode
-    { label = "━━━ COPY MODE (Leader + p) ━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    {
+      label = "━━━ COPY MODE (Leader + p) ━━━━━━━━━━━━━━━━━━━━━━━",
+      id = "_",
+    },
     { label = "v / V / Ctrl+v      Selection: char / line / block", id = "_" },
     { label = "y                   Yank to clipboard and exit", id = "_" },
     { label = "h/j/k/l             Vim movement", id = "_" },
@@ -974,7 +1009,10 @@ wezterm.on("show-help", function(window, pane)
     { label = "n / N               Next / prev match", id = "_" },
 
     -- Section: UI Mode
-    { label = "━━━ UI MODE (Leader + u) ━━━━━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    {
+      label = "━━━ UI MODE (Leader + u) ━━━━━━━━━━━━━━━━━━━━━━━━━",
+      id = "_",
+    },
     { label = "c                   New tab", id = "_" },
     { label = "b / n               Prev / next tab", id = "_" },
     { label = "1-9                 Jump to tab", id = "_" },
@@ -985,7 +1023,10 @@ wezterm.on("show-help", function(window, pane)
     { label = "x                   Close pane", id = "_" },
 
     -- Section: Search Mode
-    { label = "━━━ SEARCH MODE (Leader + i) ━━━━━━━━━━━━━━━━━━━━━", id = "_" },
+    {
+      label = "━━━ SEARCH MODE (Leader + i) ━━━━━━━━━━━━━━━━━━━━━",
+      id = "_",
+    },
     { label = "Type to search      Incremental search", id = "_" },
     { label = "Ctrl+n / Ctrl+p     Next / prev match", id = "_" },
     { label = "Ctrl+r              Cycle match type (case/regex)", id = "_" },
@@ -998,9 +1039,9 @@ wezterm.on("show-help", function(window, pane)
       title = "  Keybinding Help (type to search)",
       choices = choices,
       fuzzy = true,
-      action = wezterm.action_callback(function(win, p, id, label)
-        help_active[tostring(win:window_id())] = nil
-      end),
+      action = wezterm.action_callback(
+        function(win, _p, _id, _label) help_active[tostring(win:window_id())] = nil end
+      ),
     }),
     pane
   )
@@ -1021,9 +1062,7 @@ wezterm.on("nav-tree", function(window, pane)
   local workspaces = {}
   for _, mux_win in ipairs(wezterm.mux.all_windows()) do
     local ws_name = mux_win:get_workspace()
-    if not workspaces[ws_name] then
-      workspaces[ws_name] = {}
-    end
+    if not workspaces[ws_name] then workspaces[ws_name] = {} end
     -- Collect tabs for this workspace
     for tab_index, tab in ipairs(mux_win:tabs()) do
       table.insert(workspaces[ws_name], {
@@ -1062,9 +1101,7 @@ wezterm.on("nav-tree", function(window, pane)
     for t_idx, entry in ipairs(tabs) do
       local tab = entry.tab
       local tab_title = tab:get_title()
-      if not tab_title or #tab_title == 0 then
-        tab_title = tab:active_pane():get_title()
-      end
+      if not tab_title or #tab_title == 0 then tab_title = tab:active_pane():get_title() end
       tab_title = tab_title:gsub("^Copy mode: ", "")
       local tab_num = tab:tab_id()
 
@@ -1080,7 +1117,9 @@ wezterm.on("nav-tree", function(window, pane)
         local short = full:gsub("^" .. os.getenv("HOME"), "~")
         -- Show just the last 2 path components for brevity
         local parts = {}
-        for part in short:gmatch("[^/]+") do table.insert(parts, part) end
+        for part in short:gmatch("[^/]+") do
+          table.insert(parts, part)
+        end
         if #parts > 2 then
           cwd = " ‹…/" .. parts[#parts - 1] .. "/" .. parts[#parts] .. "›"
         elseif #parts > 0 then
@@ -1092,11 +1131,16 @@ wezterm.on("nav-tree", function(window, pane)
       local proc = tab:active_pane():get_foreground_process_name() or ""
       local proc_short = proc:match("([^/]+)$") or ""
       local tab_icon = "  "
-      if proc_short == "yazi" then tab_icon = "󰉋 "
-      elseif proc_short == "nvim" or proc_short == "vim" then tab_icon = " "
-      elseif proc_short == "claude" then tab_icon = "󰚩 "
-      elseif proc_short == "node" then tab_icon = " "
-      elseif proc_short == "python3" or proc_short == "python" then tab_icon = " "
+      if proc_short == "yazi" then
+        tab_icon = "󰉋 "
+      elseif proc_short == "nvim" or proc_short == "vim" then
+        tab_icon = " "
+      elseif proc_short == "claude" then
+        tab_icon = "󰚩 "
+      elseif proc_short == "node" then
+        tab_icon = " "
+      elseif proc_short == "python3" or proc_short == "python" then
+        tab_icon = " "
       end
 
       table.insert(choices, {
@@ -1116,7 +1160,9 @@ wezterm.on("nav-tree", function(window, pane)
 
           table.insert(choices, {
             label = pane_indent .. pane_branch .. pane_marker .. p_title,
-            id = "pane:" .. ws_name .. ":" .. tostring(entry.mux_win_id) .. ":" .. tostring(tab_num) .. ":" .. tostring(p_info.pane:pane_id()),
+            id = "pane:" .. ws_name .. ":" .. tostring(entry.mux_win_id) .. ":" .. tostring(
+              tab_num
+            ) .. ":" .. tostring(p_info.pane:pane_id()),
           })
         end
       end
@@ -1129,7 +1175,10 @@ wezterm.on("nav-tree", function(window, pane)
   for name, data in pairs(state) do
     if not workspaces[name] then
       if not has_saved then
-        table.insert(choices, { label = "─── saved ───────────────────────────", id = "_" })
+        table.insert(choices, {
+          label = "─── saved ───────────────────────────",
+          id = "_",
+        })
         has_saved = true
       end
       local n = data.tabs and #data.tabs or 0
@@ -1145,7 +1194,7 @@ wezterm.on("nav-tree", function(window, pane)
       title = "  Navigate",
       choices = choices,
       fuzzy = true,
-      action = wezterm.action_callback(function(win, p, id, label)
+      action = wezterm.action_callback(function(win, p, id, _label)
         map_active[tostring(win:window_id())] = nil
         if not id then return end
 
@@ -1153,7 +1202,6 @@ wezterm.on("nav-tree", function(window, pane)
           -- Switch to workspace
           local ws = id:sub(4)
           win:perform_action(act.SwitchToWorkspace({ name = ws }), p)
-
         elseif id:sub(1, 4) == "tab:" then
           -- Parse tab:workspace:mux_win_id:tab_id
           local parts = {}
@@ -1178,7 +1226,6 @@ wezterm.on("nav-tree", function(window, pane)
               break
             end
           end
-
         elseif id:sub(1, 5) == "pane:" then
           -- Parse pane:workspace:mux_win_id:tab_id:pane_id
           local parts = {}
@@ -1211,7 +1258,6 @@ wezterm.on("nav-tree", function(window, pane)
               break
             end
           end
-
         elseif id:sub(1, 8) == "restore:" then
           -- Restore saved workspace
           local name = id:sub(9)
@@ -1222,10 +1268,13 @@ wezterm.on("nav-tree", function(window, pane)
               local cwd = t.cwd:gsub("^file://[^/]*", "")
               if cwd == "" then cwd = os.getenv("HOME") end
               if first then
-                win:perform_action(act.SwitchToWorkspace({
-                  name = name,
-                  spawn = { cwd = cwd },
-                }), p)
+                win:perform_action(
+                  act.SwitchToWorkspace({
+                    name = name,
+                    spawn = { cwd = cwd },
+                  }),
+                  p
+                )
                 first = false
               else
                 win:perform_action(act.SpawnCommandInNewTab({ cwd = cwd }), p)
@@ -1284,13 +1333,14 @@ config.keys = {
     action = wezterm.action_callback(function(window, pane)
       local cwd = pane:get_current_working_dir()
       local dir = os.getenv("HOME")
-      if cwd then
-        dir = tostring(cwd):gsub("^file://[^/]*", "")
-      end
-      window:perform_action(act.SpawnCommandInNewTab({
-        args = { "/opt/homebrew/bin/yazi", dir },
-        cwd = dir,
-      }), pane)
+      if cwd then dir = tostring(cwd):gsub("^file://[^/]*", "") end
+      window:perform_action(
+        act.SpawnCommandInNewTab({
+          args = { "/opt/homebrew/bin/yazi", dir },
+          cwd = dir,
+        }),
+        pane
+      )
     end),
   },
   {
@@ -1298,10 +1348,8 @@ config.keys = {
     mods = "LEADER",
     action = act.PromptInputLine({
       description = "Enter new tab name:",
-      action = wezterm.action_callback(function(window, pane, line)
-        if line and #line > 0 then
-          window:active_tab():set_title(line)
-        end
+      action = wezterm.action_callback(function(window, _pane, line)
+        if line and #line > 0 then window:active_tab():set_title(line) end
       end),
     }),
   },
@@ -1310,10 +1358,8 @@ config.keys = {
     mods = "LEADER|SHIFT",
     action = act.PromptInputLine({
       description = "Enter new workspace name:",
-      action = wezterm.action_callback(function(window, pane, line)
-        if line and #line > 0 then
-          wezterm.mux.rename_workspace(window:active_workspace(), line)
-        end
+      action = wezterm.action_callback(function(window, _pane, line)
+        if line and #line > 0 then wezterm.mux.rename_workspace(window:active_workspace(), line) end
       end),
     }),
   },
@@ -1324,7 +1370,8 @@ config.keys = {
     mods = "LEADER",
     action = wezterm.action_callback(function(window, pane)
       local home = os.getenv("HOME")
-      local success, stdout = wezterm.run_child_process({ "/opt/homebrew/bin/zoxide", "query", "-l" })
+      local success, stdout =
+        wezterm.run_child_process({ "/opt/homebrew/bin/zoxide", "query", "-l" })
       local choices = {}
       for _, name in ipairs(wezterm.mux.get_workspace_names()) do
         table.insert(choices, { label = "● " .. name, id = "ws:" .. name })
@@ -1340,17 +1387,20 @@ config.keys = {
           title = "Switch Workspace",
           choices = choices,
           fuzzy = true,
-          action = wezterm.action_callback(function(win, p, id, label)
+          action = wezterm.action_callback(function(win, p, id, _label)
             if not id then return end
             if id:sub(1, 3) == "ws:" then
               win:perform_action(act.SwitchToWorkspace({ name = id:sub(4) }), p)
             elseif id:sub(1, 4) == "dir:" then
               local dir = id:sub(5)
               local name = dir:match("([^/]+)$") or dir
-              win:perform_action(act.SwitchToWorkspace({
-                name = name,
-                spawn = { cwd = dir },
-              }), p)
+              win:perform_action(
+                act.SwitchToWorkspace({
+                  name = name,
+                  spawn = { cwd = dir },
+                }),
+                p
+              )
             end
           end),
         }),
@@ -1368,13 +1418,21 @@ config.keys = {
   ---------------------------------------------------------------------------
 
   -- Leader + u = UI mode
-  { key = "u", mods = "LEADER", action = act.ActivateKeyTable({ name = "ui_mode", one_shot = false }) },
+  {
+    key = "u",
+    mods = "LEADER",
+    action = act.ActivateKeyTable({ name = "ui_mode", one_shot = false }),
+  },
 
   -- Leader + i = Search mode
   { key = "i", mods = "LEADER", action = act.Search({ CaseInSensitiveString = "" }) },
 
   -- Leader + o = Scroll mode
-  { key = "o", mods = "LEADER", action = act.ActivateKeyTable({ name = "scroll_mode", one_shot = false }) },
+  {
+    key = "o",
+    mods = "LEADER",
+    action = act.ActivateKeyTable({ name = "scroll_mode", one_shot = false }),
+  },
 
   -- Leader + p = Copy mode
   { key = "p", mods = "LEADER", action = act.ActivateCopyMode },
@@ -1410,7 +1468,10 @@ config.key_tables = {
     { key = "g", action = act.ScrollToTop },
     { key = "G", mods = "SHIFT", action = act.ScrollToBottom },
     -- Search within scroll mode
-    { key = "/", action = act.Multiple({ act.PopKeyTable, act.Search({ CaseInSensitiveString = "" }) }) },
+    {
+      key = "/",
+      action = act.Multiple({ act.PopKeyTable, act.Search({ CaseInSensitiveString = "" }) }),
+    },
     -- Exit
     { key = "Escape", action = act.PopKeyTable },
     { key = "q", action = act.PopKeyTable },
