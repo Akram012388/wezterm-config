@@ -377,6 +377,15 @@ local function build_split_tree(panes)
   }
 end
 
+-- Walk a split tree to its first leaf and return that leaf's cwd. The root of a
+-- multi-pane tab is a "split" node with no cwd of its own — only leaves carry one.
+local function first_leaf_cwd(node)
+  if not node then return nil end
+  if node.type == "leaf" then return node.cwd end
+  if node.children then return first_leaf_cwd(node.children[1]) end
+  return nil
+end
+
 -- Helper: restore a split tree into a given pane
 -- Returns the pane that should be focused (if any)
 local function restore_split_tree(tree, target_pane)
@@ -391,11 +400,12 @@ local function restore_split_tree(tree, target_pane)
   -- Calculate size for the new (second) pane as a fraction
   local size = 1.0 - tree.ratio
 
-  -- Split the target pane
+  -- Split the target pane, spawning the new pane in its target directory so it
+  -- starts there even before the `cd` below lands.
   local new_pane = target_pane:split({
     direction = tree.direction,
     size = size,
-    cwd = os.getenv("HOME"),
+    cwd = first_leaf_cwd(tree.children[2]) or os.getenv("HOME"),
   })
 
   -- Recurse: first child stays in target_pane, second child in new_pane
@@ -414,6 +424,13 @@ local function override_tree_cwds(node, cwd)
       override_tree_cwds(child, cwd)
     end
   end
+end
+
+-- Pick the spawn cwd for a tab: a base_dir override wins, else the tab's
+-- first-leaf cwd (multi-pane tabs have no cwd on the split root), else home.
+local function tab_spawn_cwd(tab_data, base_dir, home)
+  if base_dir then return base_dir end
+  return first_leaf_cwd(tab_data.split_tree) or home
 end
 
 -- Restore a saved/template tab list into a freshly-created workspace window.
@@ -435,10 +452,7 @@ local function restore_tabs(target_win, tabs, opts)
   -- Create the remaining tabs
   for i = 2, #tabs do
     local tab_data = tabs[i]
-    local tab_cwd = base_dir or home
-    if not base_dir and tab_data.split_tree and tab_data.split_tree.cwd then
-      tab_cwd = tab_data.split_tree.cwd
-    end
+    local tab_cwd = tab_spawn_cwd(tab_data, base_dir, home)
     local new_tab, new_pane = target_win:spawn_tab({ cwd = tab_cwd })
     if tab_data.split_tree then
       if base_dir then override_tree_cwds(tab_data.split_tree, base_dir) end
@@ -462,9 +476,7 @@ local function launch_workspace(win, pane, ws_name, tabs, opts)
   local home = os.getenv("HOME")
   local first_tab = tabs[1]
   local first_cwd = opts.base_dir or home
-  if not opts.base_dir and first_tab and first_tab.split_tree and first_tab.split_tree.cwd then
-    first_cwd = first_tab.split_tree.cwd
-  end
+  if first_tab then first_cwd = tab_spawn_cwd(first_tab, opts.base_dir, home) end
 
   win:perform_action(act.SwitchToWorkspace({ name = ws_name, spawn = { cwd = first_cwd } }), pane)
 
@@ -809,7 +821,6 @@ wezterm.on("select-layout", function(window, pane)
             description = "Workspace name (Enter for '" .. id .. "'):",
             action = wezterm.action_callback(function(w2, p2, ws_name)
               if not ws_name or #ws_name == 0 then ws_name = id end
-              ws_name = unique_workspace_name(ws_name)
 
               w2:perform_action(
                 act.PromptInputLine({
@@ -820,10 +831,13 @@ wezterm.on("select-layout", function(window, pane)
                     else
                       base_dir = base_dir:gsub("^~", os.getenv("HOME"))
                     end
-                    launch_workspace(w3, p3, ws_name, layout.tabs, { base_dir = base_dir })
+                    -- Resolve uniqueness right before switching, to minimize the
+                    -- window where another workspace could claim the same name.
+                    local final_name = unique_workspace_name(ws_name)
+                    launch_workspace(w3, p3, final_name, layout.tabs, { base_dir = base_dir })
                     w3:toast_notification(
                       "WezTerm",
-                      "Layout '" .. id .. "' launched as '" .. ws_name .. "'",
+                      "Layout '" .. id .. "' launched as '" .. final_name .. "'",
                       nil,
                       3000
                     )
