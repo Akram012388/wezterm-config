@@ -18,6 +18,9 @@ local help_active = {}
 -- Workspace history for the last-used toggle (Leader+Tab)
 local ws_history = { current = nil, previous = nil }
 
+-- Battery readout cache (refreshed on a timer inside update-status)
+local battery_cache = { text = "", at = 0 }
+
 -- Font
 config.font = wezterm.font("JetBrainsMono Nerd Font")
 config.font_size = 14.0
@@ -193,21 +196,28 @@ wezterm.on("update-status", function(window, _pane)
 
   -- Right status: battery + time + leader indicator + mode indicator
   local date = wezterm.strftime("%a %b %-d  %H:%M")
-  local bat = ""
-  for _, b in ipairs(wezterm.battery_info()) do
-    local charge = math.floor(b.state_of_charge * 100 + 0.5)
-    local icon = ""
-    if charge >= 75 then
-      icon = "󰁹"
-    elseif charge >= 50 then
-      icon = "󰁾"
-    elseif charge >= 25 then
-      icon = "󰁼"
+  -- Battery is polled at most once every 15s — it changes slowly and the
+  -- lookup would otherwise run on every status tick.
+  local now = os.time()
+  if now - battery_cache.at >= 15 then
+    local info = wezterm.battery_info()[1]
+    if info then
+      local charge = math.floor(info.state_of_charge * 100 + 0.5)
+      local icon = "󰁺"
+      if charge >= 75 then
+        icon = "󰁹"
+      elseif charge >= 50 then
+        icon = "󰁾"
+      elseif charge >= 25 then
+        icon = "󰁼"
+      end
+      battery_cache.text = icon .. " " .. charge .. "%"
     else
-      icon = "󰁺"
+      battery_cache.text = ""
     end
-    bat = icon .. " " .. charge .. "%%"
+    battery_cache.at = now
   end
+  local bat = battery_cache.text
 
   local right_elements = {
     { Foreground = { Color = inactive_fg } },
@@ -395,6 +405,105 @@ local function restore_split_tree(tree, target_pane)
   return focus1 or focus2
 end
 
+-- Deep-replace every leaf cwd in a split tree (used for base_dir override)
+local function override_tree_cwds(node, cwd)
+  if node.type == "leaf" then
+    node.cwd = cwd
+  elseif node.children then
+    for _, child in ipairs(node.children) do
+      override_tree_cwds(child, cwd)
+    end
+  end
+end
+
+-- Restore a saved/template tab list into a freshly-created workspace window.
+-- opts: { base_dir = string|nil, active_tab = number|nil }
+local function restore_tabs(target_win, tabs, opts)
+  opts = opts or {}
+  local base_dir = opts.base_dir
+  local home = os.getenv("HOME")
+
+  -- First tab already exists (created by SwitchToWorkspace) — restore into it
+  local existing_tabs = target_win:tabs()
+  local first_tab = tabs[1]
+  if #existing_tabs > 0 and first_tab and first_tab.split_tree then
+    if base_dir then override_tree_cwds(first_tab.split_tree, base_dir) end
+    restore_split_tree(first_tab.split_tree, existing_tabs[1]:active_pane())
+    if first_tab.title and #first_tab.title > 0 then existing_tabs[1]:set_title(first_tab.title) end
+  end
+
+  -- Create the remaining tabs
+  for i = 2, #tabs do
+    local tab_data = tabs[i]
+    local tab_cwd = base_dir or home
+    if not base_dir and tab_data.split_tree and tab_data.split_tree.cwd then
+      tab_cwd = tab_data.split_tree.cwd
+    end
+    local new_tab, new_pane = target_win:spawn_tab({ cwd = tab_cwd })
+    if tab_data.split_tree then
+      if base_dir then override_tree_cwds(tab_data.split_tree, base_dir) end
+      restore_split_tree(tab_data.split_tree, new_pane)
+    end
+    if tab_data.title and #tab_data.title > 0 then new_tab:set_title(tab_data.title) end
+  end
+
+  -- Re-focus the previously active tab (saved workspaces carry active_tab)
+  if opts.active_tab then
+    local all_tabs = target_win:tabs()
+    if all_tabs[opts.active_tab + 1] then all_tabs[opts.active_tab + 1]:activate() end
+  end
+end
+
+-- Switch to (creating if needed) a workspace, then restore its tabs once the
+-- switch settles. Retries briefly in case the new window isn't ready yet.
+local RESTORE_DELAY = 0.5
+local function launch_workspace(win, pane, ws_name, tabs, opts)
+  opts = opts or {}
+  local home = os.getenv("HOME")
+  local first_tab = tabs[1]
+  local first_cwd = opts.base_dir or home
+  if not opts.base_dir and first_tab and first_tab.split_tree and first_tab.split_tree.cwd then
+    first_cwd = first_tab.split_tree.cwd
+  end
+
+  win:perform_action(act.SwitchToWorkspace({ name = ws_name, spawn = { cwd = first_cwd } }), pane)
+
+  local function try_restore(attempts)
+    local target_win = nil
+    for _, mux_win in ipairs(wezterm.mux.all_windows()) do
+      if mux_win:get_workspace() == ws_name then
+        target_win = mux_win
+        break
+      end
+    end
+    if not target_win then
+      if attempts > 0 then
+        wezterm.time.call_after(0.2, function() try_restore(attempts - 1) end)
+      end
+      return
+    end
+    restore_tabs(target_win, tabs, opts)
+  end
+
+  wezterm.time.call_after(RESTORE_DELAY, function() try_restore(5) end)
+end
+
+-- Return a workspace name not currently in use (appends " (2)", " (3)", ...)
+local function unique_workspace_name(base)
+  local function taken(candidate)
+    for _, n in ipairs(wezterm.mux.get_workspace_names()) do
+      if n == candidate then return true end
+    end
+    return false
+  end
+  if not taken(base) then return base end
+  local i = 2
+  while taken(base .. " (" .. i .. ")") do
+    i = i + 1
+  end
+  return base .. " (" .. i .. ")"
+end
+
 -- Save workspace: full state with splits, processes, focus
 wezterm.on("save-workspace", function(window, _pane)
   local workspace = window:active_workspace()
@@ -499,95 +608,8 @@ wezterm.on("restore-workspace", function(window, pane)
         if not id then return end
         local ws = state[id]
         if not ws or not ws.tabs then return end
-
-        -- Check if this workspace already exists (is running)
-        local existing = false
-        for _, name in ipairs(wezterm.mux.get_workspace_names()) do
-          if name == id then
-            existing = true
-            break
-          end
-        end
-
-        -- Use a unique restore name to avoid colliding with running workspaces
-        local restore_name = id
-        if existing then
-          -- Find a unique name with incrementing suffix
-          local n = 2
-          restore_name = id .. " (2)"
-          while true do
-            local taken = false
-            for _, name in ipairs(wezterm.mux.get_workspace_names()) do
-              if name == restore_name then
-                taken = true
-                break
-              end
-            end
-            if not taken then break end
-            n = n + 1
-            restore_name = id .. " (" .. n .. ")"
-          end
-        end
-
-        -- Create workspace with first tab
-        local first_tab = ws.tabs[1]
-        local first_cwd = os.getenv("HOME")
-        if first_tab and first_tab.split_tree and first_tab.split_tree.cwd then
-          first_cwd = first_tab.split_tree.cwd
-        end
-
-        win:perform_action(
-          act.SwitchToWorkspace({
-            name = restore_name,
-            spawn = { cwd = first_cwd },
-          }),
-          pane
-        )
-
-        -- Delay for workspace switch to complete, then restore tabs with splits
-        wezterm.time.call_after(0.5, function()
-          -- Get the new workspace's window
-          local target_win = nil
-          for _, mux_win in ipairs(wezterm.mux.all_windows()) do
-            if mux_win:get_workspace() == restore_name then
-              target_win = mux_win
-              break
-            end
-          end
-          if not target_win then return end
-
-          -- First tab already exists (created by SwitchToWorkspace), restore its splits
-          local existing_tabs = target_win:tabs()
-          if #existing_tabs > 0 and first_tab then
-            restore_split_tree(first_tab.split_tree, existing_tabs[1]:active_pane())
-            if first_tab.title and #first_tab.title > 0 then
-              existing_tabs[1]:set_title(first_tab.title)
-            end
-          end
-
-          -- Create remaining tabs with splits
-          for i = 2, #ws.tabs do
-            local tab_data = ws.tabs[i]
-            local tab_cwd = os.getenv("HOME")
-            if tab_data.split_tree and tab_data.split_tree.cwd then
-              tab_cwd = tab_data.split_tree.cwd
-            end
-
-            local new_tab, new_pane, _new_win = target_win:spawn_tab({
-              cwd = tab_cwd,
-            })
-
-            if tab_data.split_tree then restore_split_tree(tab_data.split_tree, new_pane) end
-
-            if tab_data.title and #tab_data.title > 0 then new_tab:set_title(tab_data.title) end
-          end
-
-          -- Activate the previously active tab
-          local active_idx = ws.active_tab or 0
-          local all_tabs = target_win:tabs()
-          if all_tabs[active_idx + 1] then all_tabs[active_idx + 1]:activate() end
-        end)
-
+        local restore_name = unique_workspace_name(id)
+        launch_workspace(win, pane, restore_name, ws.tabs, { active_tab = ws.active_tab or 0 })
         win:toast_notification("WezTerm", "Restoring workspace '" .. id .. "'...", nil, 3000)
       end),
     }),
@@ -649,21 +671,14 @@ end)
 -- Helper: read all layout template files from layouts directory
 local function read_layouts()
   local layouts = {}
-  local handle = io.popen('ls "' .. layouts_dir .. '"/*.json 2>/dev/null')
-  if handle then
-    for file in handle:lines() do
-      local f = io.open(file, "r")
-      if f then
-        local raw = f:read("*a")
-        f:close()
-        local ok, data = pcall(wezterm.json_parse, raw)
-        if ok and data then
-          data._file = file
-          table.insert(layouts, data)
-        end
-      end
+  for _, file in ipairs(wezterm.glob(layouts_dir .. "/*.json")) do
+    local f = io.open(file, "r")
+    if f then
+      local raw = f:read("*a")
+      f:close()
+      local ok, data = pcall(wezterm.json_parse, raw)
+      if ok and data then table.insert(layouts, data) end
     end
-    handle:close()
   end
   return layouts
 end
@@ -788,146 +803,30 @@ wezterm.on("select-layout", function(window, pane)
         end
         if not layout then return end
 
-        -- Prompt for workspace name
+        -- Prompt for workspace name, then base directory, then launch
         win:perform_action(
           act.PromptInputLine({
             description = "Workspace name (Enter for '" .. id .. "'):",
             action = wezterm.action_callback(function(w2, p2, ws_name)
               if not ws_name or #ws_name == 0 then ws_name = id end
+              ws_name = unique_workspace_name(ws_name)
 
-              -- Check if workspace name already exists
-              local existing = false
-              for _, name in ipairs(wezterm.mux.get_workspace_names()) do
-                if name == ws_name then
-                  existing = true
-                  break
-                end
-              end
-              if existing then
-                local n = 2
-                local base = ws_name
-                while existing do
-                  ws_name = base .. " (" .. n .. ")"
-                  existing = false
-                  for _, name in ipairs(wezterm.mux.get_workspace_names()) do
-                    if name == ws_name then
-                      existing = true
-                      break
-                    end
-                  end
-                  n = n + 1
-                end
-              end
-
-              -- Prompt for base directory
               w2:perform_action(
                 act.PromptInputLine({
                   description = "Base directory (Enter for home, or type path):",
                   action = wezterm.action_callback(function(w3, p3, base_dir)
-                    local home = os.getenv("HOME")
                     if not base_dir or #base_dir == 0 then
                       base_dir = nil -- use template's original cwds
                     else
-                      -- Expand ~
-                      base_dir = base_dir:gsub("^~", home)
+                      base_dir = base_dir:gsub("^~", os.getenv("HOME"))
                     end
-
-                    -- Create workspace with first tab
-                    local first_tab = layout.tabs[1]
-                    local first_cwd = home
-                    if base_dir then
-                      first_cwd = base_dir
-                    elseif first_tab and first_tab.split_tree and first_tab.split_tree.cwd then
-                      first_cwd = first_tab.split_tree.cwd
-                    end
-
-                    w3:perform_action(
-                      act.SwitchToWorkspace({
-                        name = ws_name,
-                        spawn = { cwd = first_cwd },
-                      }),
-                      p3
+                    launch_workspace(w3, p3, ws_name, layout.tabs, { base_dir = base_dir })
+                    w3:toast_notification(
+                      "WezTerm",
+                      "Layout '" .. id .. "' launched as '" .. ws_name .. "'",
+                      nil,
+                      3000
                     )
-
-                    -- Restore tabs with splits after workspace switch
-                    wezterm.time.call_after(0.5, function()
-                      local target_win = nil
-                      for _, mux_win in ipairs(wezterm.mux.all_windows()) do
-                        if mux_win:get_workspace() == ws_name then
-                          target_win = mux_win
-                          break
-                        end
-                      end
-                      if not target_win then return end
-
-                      -- Restore first tab splits
-                      local existing_tabs = target_win:tabs()
-                      if #existing_tabs > 0 and first_tab and first_tab.split_tree then
-                        -- Override cwds if base_dir provided
-                        local tree = first_tab.split_tree
-                        if base_dir then
-                          -- Deep-replace cwds in the tree
-                          local function override_cwds(node)
-                            if node.type == "leaf" then
-                              node.cwd = base_dir
-                            elseif node.children then
-                              for _, child in ipairs(node.children) do
-                                override_cwds(child)
-                              end
-                            end
-                          end
-                          -- Work on a copy concept: just override in restore
-                          override_cwds(tree)
-                        end
-                        restore_split_tree(tree, existing_tabs[1]:active_pane())
-                        if first_tab.title and #first_tab.title > 0 then
-                          existing_tabs[1]:set_title(first_tab.title)
-                        end
-                      end
-
-                      -- Create remaining tabs
-                      for i = 2, #layout.tabs do
-                        local tab_data = layout.tabs[i]
-                        local tab_cwd = home
-                        if base_dir then
-                          tab_cwd = base_dir
-                        elseif tab_data.split_tree and tab_data.split_tree.cwd then
-                          tab_cwd = tab_data.split_tree.cwd
-                        end
-
-                        local new_tab, new_pane, _ = target_win:spawn_tab({
-                          cwd = tab_cwd,
-                        })
-
-                        if tab_data.split_tree then
-                          local tree = tab_data.split_tree
-                          if base_dir then
-                            local function override_cwds(node)
-                              if node.type == "leaf" then
-                                node.cwd = base_dir
-                              elseif node.children then
-                                for _, child in ipairs(node.children) do
-                                  override_cwds(child)
-                                end
-                              end
-                            end
-                            override_cwds(tree)
-                          end
-                          restore_split_tree(tree, new_pane)
-                        end
-
-                        if tab_data.title and #tab_data.title > 0 then
-                          new_tab:set_title(tab_data.title)
-                        end
-                      end
-
-                      w3:toast_notification(
-                        "WezTerm",
-                        "Layout '" .. id .. "' launched as '" .. ws_name .. "'",
-                        nil,
-                        3000
-                      )
-                    end)
                   end),
                 }),
                 p2
@@ -1307,28 +1206,13 @@ wezterm.on("nav-tree", function(window, pane)
             end
           end
         elseif id:sub(1, 8) == "restore:" then
-          -- Restore saved workspace
+          -- Restore a saved (not running) workspace, with full split reconstruction
           local name = id:sub(9)
           local ws = state[name]
           if ws and ws.tabs then
-            local first = true
-            for _, t in ipairs(ws.tabs) do
-              local cwd = t.cwd:gsub("^file://[^/]*", "")
-              if cwd == "" then cwd = os.getenv("HOME") end
-              if first then
-                win:perform_action(
-                  act.SwitchToWorkspace({
-                    name = name,
-                    spawn = { cwd = cwd },
-                  }),
-                  p
-                )
-                first = false
-              else
-                win:perform_action(act.SpawnCommandInNewTab({ cwd = cwd }), p)
-              end
-            end
-            win:toast_notification("WezTerm", "Workspace '" .. name .. "' restored", nil, 3000)
+            local restore_name = unique_workspace_name(name)
+            launch_workspace(win, p, restore_name, ws.tabs, { active_tab = ws.active_tab or 0 })
+            win:toast_notification("WezTerm", "Restoring workspace '" .. name .. "'...", nil, 3000)
           end
         end
       end),
