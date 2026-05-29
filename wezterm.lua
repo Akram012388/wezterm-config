@@ -15,6 +15,9 @@ local layouts_dir = os.getenv("HOME") .. "/.config/wezterm/layouts"
 local map_active = {}
 local help_active = {}
 
+-- Workspace history for the last-used toggle (Leader+Tab)
+local ws_history = { current = nil, previous = nil }
+
 -- Font
 config.font = wezterm.font("JetBrainsMono Nerd Font")
 config.font_size = 14.0
@@ -144,6 +147,12 @@ end)
 
 wezterm.on("update-status", function(window, _pane)
   local workspace = window:active_workspace()
+
+  -- Track workspace history for the last-used toggle (Leader+Tab)
+  if workspace ~= ws_history.current then
+    ws_history.previous = ws_history.current
+    ws_history.current = workspace
+  end
 
   -- Determine the first tab's bg color for the arrow transition
   local first_tab_bg = inactive_bg
@@ -611,6 +620,28 @@ wezterm.on("delete-workspace", function(window, pane)
   )
 end)
 
+-- Toggle to the last-used workspace (alt-tab style)
+wezterm.on("ws-last", function(window, pane)
+  local prev = ws_history.previous
+  if not prev then
+    window:toast_notification("WezTerm", "No previous workspace yet", nil, 2000)
+    return
+  end
+  -- Don't resurrect a closed workspace as an empty one
+  local alive = false
+  for _, name in ipairs(wezterm.mux.get_workspace_names()) do
+    if name == prev then
+      alive = true
+      break
+    end
+  end
+  if not alive then
+    window:toast_notification("WezTerm", "Previous workspace is gone", nil, 2000)
+    return
+  end
+  window:perform_action(act.SwitchToWorkspace({ name = prev }), pane)
+end)
+
 -------------------------------------------------------------------------------
 -- Layout templates
 -------------------------------------------------------------------------------
@@ -929,7 +960,7 @@ wezterm.on("show-help", function(window, pane)
     { label = "Leader + i          Search mode (find in scrollback)", id = "_" },
     { label = "Leader + o          Scroll mode (man-page navigation)", id = "_" },
     { label = "Leader + p          Copy mode (vim selection/yank)", id = "_" },
-    { label = "Leader + m          Map mode (tree navigator)", id = "_" },
+    { label = "Leader + m          Map mode (jump to any workspace/tab/pane)", id = "_" },
     { label = "Leader + ?          Help mode (this screen)", id = "_" },
     { label = "Esc / q             Exit any mode back to Normal", id = "_" },
 
@@ -959,7 +990,9 @@ wezterm.on("show-help", function(window, pane)
       label = "━━━ WORKSPACES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
       id = "_",
     },
-    { label = "Leader + w          Workspace picker (zoxide)", id = "_" },
+    { label = "Leader + w          Workspace picker (running + zoxide)", id = "_" },
+    { label = "Leader + ] / [      Next / previous workspace", id = "_" },
+    { label = "Leader + Tab        Toggle last-used workspace", id = "_" },
     { label = "Leader + W          Previous workspace", id = "_" },
     { label = "Leader + $          Rename workspace", id = "_" },
     { label = "Leader + S          Save workspace state", id = "_" },
@@ -981,6 +1014,9 @@ wezterm.on("show-help", function(window, pane)
     },
     { label = "Leader + y          Open yazi file manager (new tab)", id = "_" },
     { label = "Cmd + Enter         Toggle fullscreen", id = "_" },
+    { label = "Shift + Enter       Send CSI-u (multiline in TUI apps)", id = "_" },
+    { label = "Mouse select        Copy + clear highlight", id = "_" },
+    { label = "Super + click       Open link under cursor", id = "_" },
 
     -- Section: Scroll Mode
     {
@@ -1032,6 +1068,18 @@ wezterm.on("show-help", function(window, pane)
     { label = "Ctrl+r              Cycle match type (case/regex)", id = "_" },
     { label = "Enter               Accept match → copy mode", id = "_" },
     { label = "Esc / Ctrl+q        Exit search", id = "_" },
+
+    -- Section: Map Mode
+    {
+      label = "━━━ MAP MODE (Leader + m) ━━━━━━━━━━━━━━━━━━━━━━━━",
+      id = "_",
+    },
+    { label = "Type to search      Fuzzy-filter the tree", id = "_" },
+    { label = "Enter on workspace  Switch to it", id = "_" },
+    { label = "Enter on tab        Switch workspace + focus that tab", id = "_" },
+    { label = "Enter on pane       Switch + focus that exact pane", id = "_" },
+    { label = "Enter on saved      Restore a saved (not running) workspace", id = "_" },
+    { label = "Esc                 Cancel", id = "_" },
   }
 
   window:perform_action(
@@ -1413,6 +1461,11 @@ config.keys = {
   { key = "R", mods = "LEADER|SHIFT", action = act.EmitEvent("restore-workspace") },
   { key = "D", mods = "LEADER|SHIFT", action = act.EmitEvent("delete-workspace") },
 
+  -- Instant workspace switching
+  { key = "]", mods = "LEADER", action = act.SwitchWorkspaceRelative(1) },
+  { key = "[", mods = "LEADER", action = act.SwitchWorkspaceRelative(-1) },
+  { key = "Tab", mods = "LEADER", action = act.EmitEvent("ws-last") },
+
   ---------------------------------------------------------------------------
   -- Mode entry keys
   ---------------------------------------------------------------------------
@@ -1516,6 +1569,9 @@ config.key_tables = {
     { key = "S", mods = "SHIFT", action = act.EmitEvent("save-workspace") },
     { key = "R", mods = "SHIFT", action = act.EmitEvent("restore-workspace") },
     { key = "D", mods = "SHIFT", action = act.EmitEvent("delete-workspace") },
+    { key = "]", action = act.SwitchWorkspaceRelative(1) },
+    { key = "[", action = act.SwitchWorkspaceRelative(-1) },
+    { key = "Tab", action = act.EmitEvent("ws-last") },
     -- Exit
     { key = "Escape", action = act.PopKeyTable },
     { key = "q", action = act.PopKeyTable },
